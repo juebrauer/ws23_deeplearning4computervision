@@ -2,17 +2,24 @@ import torch
 from torchvision import datasets, transforms
 import torch.optim as optim
 import torch.nn as nn
+import os
 
-print("Willkommen zum cnnexps Modul! V3.0")
+print("Willkommen zum cnnexps Modul! V2023-11-19")
+
+imagenette2_class_names = ["tench",
+                           "English springer",
+                           "cassette player",
+                           "chain saw",
+                           "church",
+                           "French horn",
+                           "garbage truck",
+                           "gas pump",
+                           "golf ball",
+                           "parachute"]
 
 def prepare_dataset(folder):
-    
-    # Transformations
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor()    
-    ])
+
+    transform = get_image_transforms()
     
     # Trainings- und Testdatensatz vorbereiten
     train_dataset = datasets.ImageFolder(root=f"{folder}/train",
@@ -46,6 +53,18 @@ class SimpleCNN(nn.Module):
         self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
         self.pool3 = nn.MaxPool2d(2)
         self.relu3 = nn.ReLU()
+
+        self.conv4 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1)
+        self.pool4 = nn.MaxPool2d(2)
+        self.relu4 = nn.ReLU()
+
+        self.conv5 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1)
+        self.pool5 = nn.MaxPool2d(2)
+        self.relu5 = nn.ReLU()
+
+        self.conv6 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=1, padding=1)
+        self.pool6 = nn.MaxPool2d(2)
+        self.relu6 = nn.ReLU()
         
         self.flatten = nn.Flatten()
         
@@ -53,28 +72,40 @@ class SimpleCNN(nn.Module):
         with torch.no_grad():
             self._initialize_fc_layers(torch.rand(1, 3, 224, 224))
 
-    def _initialize_fc_layers(self, x):
+    
+    def feature_hierarchy(self, x):
+
         x = self.pool1(self.relu1(self.conv1(x)))
         x = self.pool2(self.relu2(self.conv2(x)))
         x = self.pool3(self.relu3(self.conv3(x)))
+        x = self.pool4(self.relu4(self.conv4(x)))
+        x = self.pool5(self.relu5(self.conv5(x)))
+        x = self.pool6(self.relu6(self.conv6(x)))
+        return x
+        
+
+    def _initialize_fc_layers(self, x):
+
+        x = self.feature_hierarchy(x)        
+        
         x = self.flatten(x)
         print("x.size=",x.size())
         n_size = x.size(1)
         print("n_size=",n_size)
         self.fc1   = nn.Linear(n_size, 512)
-        self.relu4 = nn.ReLU()
+        self.relufc1 = nn.ReLU()
         self.fc2   = nn.Linear(512, 10)
+        
 
     def forward(self, x):
-        x = self.pool1(self.relu1(self.conv1(x)))
-        x = self.pool2(self.relu2(self.conv2(x)))
-        x = self.pool3(self.relu3(self.conv3(x)))
+        # Bild --> Merkmalstensor
+        x = self.feature_hierarchy(x) 
 
-        # Übergang zum MLP
+        # Merkmalstensor flach machen
         x = self.flatten(x)
 
-        # MLP        
-        x = self.relu4(self.fc1(x))        
+        # Merkmalstensor mit MLP klassifizieren
+        x = self.relufc1(self.fc1(x))        
         x = self.fc2(x)
 
         # Output-Tensor zurückliefern
@@ -83,8 +114,16 @@ class SimpleCNN(nn.Module):
 
 
 
-def train_model(model, device, train_loader, test_loader, num_epochs=2):
+def train_model(model_dir,
+                model,
+                device,
+                train_loader,
+                test_loader,
+                num_epochs=2):
 
+    from torchsummary import summary
+    summary(model, (3, 224, 224), device=str(device))
+    
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
     model.train()
@@ -121,7 +160,7 @@ def train_model(model, device, train_loader, test_loader, num_epochs=2):
         testaccs.append( test_accuracy )
 
         # ... Modell und Genauigkeiten pro Epoche speichern
-        save_model(epoch, model, testaccs)
+        save_model(model_dir, epoch, model, testaccs)
 
         print(f"Epoch {epoch}/{num_epochs}, TestAcc: {test_accuracy*100:.4f}%")
 
@@ -152,16 +191,56 @@ def test_model(model, device, test_loader):
     return accuracy
 
 
-def save_model(epoch, model, testaccs):
+def save_model(model_dir, epoch, model, testaccs):
+    
+
+    if not os.path.exists(model_dir):        
+        os.makedirs(model_dir)
+        
     import pickle
-    datei = open(f"models/model_{epoch:04}.pkl", "wb")
+    datei = open(f"{model_dir}/model_{epoch:04}.pkl", "wb")
     pickle.dump(model, datei)
     pickle.dump(testaccs, datei)
     datei.close()
 
 
+def get_image_transforms():
+
+    transform = transforms.Compose([        
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor()    
+    ])
+
+    return transform
 
 
+def classify_image(img, model, device):
+
+    # OpenCV image --> PIL image
+    from PIL import Image
+    img = Image.fromarray(img)
+
+    transform = get_image_transforms()
+
+    img_tensor = transform(img).unsqueeze(0)
+
+    img_tensor = img_tensor.to(device)
+
+    model.eval()
+
+    outputs = model(img_tensor)
+
+    _, idx = torch.max(outputs, 1)
+        
+    return outputs, imagenette2_class_names[idx.item()]
+
+
+def visualize_predictions(outputs):
+    import matplotlib.pyplot as plt
+    plt.bar(imagenette2_class_names, outputs.detach().cpu().flatten())
+    plt.xticks(rotation=90)
+    plt.show()
 
 
 
