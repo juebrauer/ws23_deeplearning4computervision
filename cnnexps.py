@@ -19,17 +19,16 @@ imagenette2_class_names = ["tench",
 
 def prepare_dataset(folder):
 
-    transform = get_image_transforms()
     
     # Trainings- und Testdatensatz vorbereiten
     train_dataset = datasets.ImageFolder(root=f"{folder}/train",
-                                         transform=transform)
+                                         transform=get_train_image_transforms())
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=32,
                                                shuffle=True)
     
     test_dataset = datasets.ImageFolder(root=f"{folder}/val",
-                                        transform=transform)
+                                        transform=get_test_image_transforms())
     test_loader = torch.utils.data.DataLoader(test_dataset,
                                               batch_size=32,
                                               shuffle=False)
@@ -105,7 +104,8 @@ class SimpleCNN(nn.Module):
         x = self.flatten(x)
 
         # Merkmalstensor mit MLP klassifizieren
-        x = self.relufc1(self.fc1(x))        
+        x = self.relufc1(self.fc1(x)) 
+        
         x = self.fc2(x)
 
         # Output-Tensor zurückliefern
@@ -204,7 +204,7 @@ def save_model(model_dir, epoch, model, testaccs):
     datei.close()
 
 
-def get_image_transforms():
+def get_test_image_transforms():
 
     transform = transforms.Compose([        
         transforms.Resize(256),
@@ -215,13 +215,28 @@ def get_image_transforms():
     return transform
 
 
+def get_train_image_transforms():
+
+    test_transforms = get_test_image_transforms()
+
+    train_transforms = transforms.Compose([
+        transforms.ColorJitter(),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.RandomRotation(degrees=30),
+        *test_transforms.transforms,  # Fügt die ursprünglichen Transformationen hinzu
+        transforms.RandomErasing(p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0)
+    ])
+
+    return train_transforms
+
+
 def classify_image(img, model, device):
 
     # OpenCV image --> PIL image
     from PIL import Image
     img = Image.fromarray(img)
 
-    transform = get_image_transforms()
+    transform = get_test_image_transforms()
 
     img_tensor = transform(img).unsqueeze(0)
 
